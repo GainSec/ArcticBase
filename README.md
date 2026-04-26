@@ -436,10 +436,10 @@ To be honest about scope:
 - **Not a backup service.** Use `/export`, `/snapshot`, and the trash
   tar.gz; or the data directory is just a directory you can `tar` and rsync.
 
-## Contributing
-
-PRs welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md).
-
 ## License
 
 [MIT](./LICENSE).
+
+## Authors
+
+[Jon 'GainSec' Gaines](https://gainsec.com/)
