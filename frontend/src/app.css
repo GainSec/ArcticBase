@@ -1,0 +1,122 @@
+/* Arctic Base chrome — Codename Kids Next Door treehouse aesthetic.
+   Cardboard browns + primary toy colours + caution-tape yellow + mint green.
+   Brutalist hard offset shadows on black borders, stencil display type, all-caps tracked labels.
+
+   These tokens drive only the Arctic Base shell. Per-workbench themed surfaces use --wb-* tokens
+   independently and never inherit from these. */
+
+:root {
+  /* Cardboard & wood — the treehouse interior */
+  --ab-bg: #1f1208;            /* deep cocoa floorboards */
+  --ab-surface: #2e1c0d;       /* cardboard plank */
+  --ab-surface-2: #3d2715;     /* lighter cardboard */
+  --ab-surface-3: #5e3d22;     /* sun-bleached pine */
+  --ab-bright: #7a522e;        /* worn 2x4 edge */
+  --ab-ink: #fff4d6;           /* manila / parchment */
+  --ab-muted: #d8b985;         /* aged tape */
+  --ab-rule: #6e4322;          /* nail-line brown */
+  --ab-rule-strong: #c79a45;   /* gold rivet */
+
+  /* Numbuh primaries — toy-bright, label-bold */
+  --ab-red: #d62828;           /* Numbuh 1 turtleneck / SCRAM */
+  --ab-red-bright: #ff3b3b;    /* hover/glow */
+  --ab-on-red: #fff4d6;
+  --ab-blue: #1d3557;          /* soda-can blue */
+  --ab-cyan: #2196f3;          /* CRT glow */
+  --ab-yellow: #7dd3fc;        /* arctic ice — primary accent (var name kept for compat) */
+  --ab-warn-yellow: #ffcc00;   /* caution-tape yellow — used for highlight CTAs */
+  --ab-green: #6dd58c;         /* treehouse leaves / success */
+  --ab-green-deep: #3a7d3a;
+  --ab-orange: #ff7a1a;        /* Numbuh 4 hoodie */
+
+  /* Functional aliases */
+  --ab-primary: var(--ab-red);
+  --ab-primary-bright: var(--ab-red-bright);
+  --ab-on-primary: var(--ab-ink);
+  --ab-error: var(--ab-red-bright);
+
+  --ab-radius: 0.25rem;
+  --ab-radius-lg: 0.5rem;
+  --ab-shadow-hard: 4px 4px 0 #000;
+  --ab-shadow-hard-lg: 6px 6px 0 #000;
+  --ab-shadow-bolt: 2px 2px 0 #000;
+
+  --ab-font-stencil: "Black Ops One", "Bungee", "Impact", system-ui, sans-serif;
+  --ab-font-display: "Bungee", "Black Ops One", "Impact", system-ui, sans-serif;
+  --ab-font-body: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --ab-font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --ab-font-crt: "VT323", "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ab-bg);
+  /* Subtle plank-wood gradient — not hammering the eye, just texture */
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 240px,
+      rgba(0, 0, 0, 0.18) 240px 242px
+    ),
+    radial-gradient(circle at 20% -10%, rgba(125, 211, 252, 0.06), transparent 60%),
+    radial-gradient(circle at 100% 100%, rgba(33, 150, 243, 0.05), transparent 50%);
+  color: var(--ab-ink);
+  font-family: var(--ab-font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+#app { min-height: 100vh; }
+
+a {
+  color: var(--ab-yellow);
+  text-decoration-color: var(--ab-rule-strong);
+}
+
+/* Reusable label-maker — embossed label tape, 12px uppercase tracked. */
+.label-maker {
+  font-family: var(--ab-font-body);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* Stencil display headlines — KND 2x4-tech vibe. */
+.stencil {
+  font-family: var(--ab-font-stencil);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.display {
+  font-family: var(--ab-font-display);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Caution-tape striping — yellow + black diagonals, used on upload zones / warnings. */
+.caution-tape {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--ab-yellow) 0 14px,
+    #000 14px 28px
+  );
+}
+
+/* Scrollbar feels treehouse-y too */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ab-bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--ab-rule-strong);
+  border: 2px solid #000;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ab-yellow); }

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "obj_852aa19d3bc04c26879623f0",
+  "kind": "md",
+  "title": "README (public release)",
+  "description": "",
+  "drawer": "docs",
+  "filename": "README.md",
+  "mime": "text/markdown",
+  "size_bytes": 17348,
+  "etag": "sha256:c5e87aba55bd0abf890200751564ecccb5e6602fd41165ee9a5e03086b9c64f9",
+  "created_at": "2026-04-25T14:59:56.076882Z",
+  "updated_at": "2026-04-26T09:59:10.568725Z",
+  "state_version": 0,
+  "order": 0,
+  "last_accessed_at": "2026-04-26T06:50:39.376673Z",
+  "pinned": false,
+  "archived": false
+}

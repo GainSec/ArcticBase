@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "slug": "arctic-base",
+  "title": "Arctic Base",
+  "description": "**Self-hosted workbench host for AI agents.** This workbench documents Arctic Base itself — a recursive demo. Public release docs, architecture diagram, full feature tour.",
+  "url": "https://github.com/yourname/arctic-base",
+  "ip": "192.168.13.37",
+  "local_path": "/home/benchy/workbench",
+  "tags": [
+    "docs",
+    "meta",
+    "public"
+  ],
+  "banner": null,
+  "custom_fields": {
+    "version": "v1.0.0",
+    "license": "MIT",
+    "default_port": "2929",
+    "repo_layout": "backend/ frontend/ data/ docs/",
+    "test_count": "61 backend + 0 frontend behavior"
+  },
+  "created_at": "2026-04-25T14:59:56.070080Z",
+  "updated_at": "2026-04-26T06:24:30.043890Z",
+  "last_accessed_at": "2026-04-26T06:50:40.910407Z"
+}

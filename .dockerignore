@@ -1,0 +1,51 @@
+# Build context shaping — keep the image small + the cache stable.
+
+# Runtime state (mounted at runtime as a volume; never baked into the image).
+data/
+trash/
+snapshots/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.uv/
+**/*.egg-info/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+
+# Node / Vite
+**/node_modules/
+**/.svelte-kit/
+frontend/dist/
+
+# Tests + dev material — the runtime image doesn't need these.
+backend/tests/
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# Repo metadata not needed at runtime.
+docs/
+*.zip
+*.tar.gz
+
+# OS / editors / playwright
+.DS_Store
+.vscode/
+.idea/
+.playwright-mcp/
+
+# Local env (the image gets fresh defaults from ENV in the Dockerfile).
+.env
+.env.local
+
+# Git metadata
+.git/
+.gitignore
+.github/
+
+# Docker — don't recurse onto ourselves.
+Dockerfile
+.dockerignore
+docker-compose*.yml

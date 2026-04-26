@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.uv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+frontend/dist/
+.svelte-kit/
+
+# Arctic Base data
+data/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Local environment
+.env
+.env.local
+
+*.zip
+
+# Playwright artifacts from dev sessions.
+.playwright-mcp/
+*.png
+!frontend/public/*.svg
+!frontend/public/*.png
+!docs/**/*.png

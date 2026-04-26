@@ -1,0 +1,39 @@
+# One-command Arctic Base deployment.
+# Usage:
+#   docker compose up -d        # start in the background
+#   docker compose logs -f      # follow logs
+#   docker compose pull         # update to a newer image (when published)
+#   docker compose down         # stop (preserves the data volume)
+#
+# Adjust the bind mount path below if you want data to live somewhere specific.
+
+services:
+  arctic-base:
+    image: arctic-base:latest
+    # Uncomment to build locally instead of pulling:
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: 1.0.0
+    container_name: arctic-base
+    restart: unless-stopped
+    ports:
+      - "2929:2929"
+    volumes:
+      - ./data:/data
+    environment:
+      ARCTIC_BASE_DATA: /data
+      ARCTIC_BASE_HOST: 0.0.0.0
+      ARCTIC_BASE_PORT: 2929
+      # ARCTIC_BASE_MAX_UPLOAD_BYTES: 2147483648
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:2929/api/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 4s
+      retries: 3
+      start_period: 8s
+    # Drop privileges further if your kernel supports it.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
