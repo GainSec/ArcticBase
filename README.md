@@ -15,7 +15,7 @@ forcing you to copy-paste.
 [Object kinds](#object-kinds) · [Templates](#html--runbook-templates) ·
 [Theming](#theming) · [API](#api-surface) · [Docker](#docker) · [License](#license)
 
-**📖 [Live system overview](docs/overview.html)** — single-page tour of what Arctic Base is, the architecture, the 7 object kinds, and the agent surface. Best viewed via GitHub Pages or after cloning.
+**📖 [Live system overview](docs/index.html)** — single-page tour of what Arctic Base is, the architecture, the 7 object kinds, and the agent surface. Best viewed via GitHub Pages or after cloning.
 
 </div>
 
