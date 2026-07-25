@@ -163,6 +163,29 @@ def test_object_multipart_upload(client: TestClient) -> None:
     assert body["size_bytes"] == 3
 
 
+def test_upload_accepts_blob_meta_part(client: TestClient) -> None:
+    client.post("/api/workbenches", json={"title": "T", "slug": "t"})
+    client.put("/api/workbenches/t/theme", json={"raw": VALID_THEME})
+    files = {
+        "meta": (
+            "blob",
+            '{"kind":"file","title":"browser-upload","drawer":"files"}',
+            "application/json",
+        ),
+        "file": ("browser.bin", b"browser-bytes", "application/octet-stream"),
+    }
+
+    r = client.post("/api/workbenches/t/objects", files=files)
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["title"] == "browser-upload"
+    assert body["filename"] == "browser.bin"
+    assert body["size_bytes"] == len(b"browser-bytes")
+    content = client.get(f"/api/workbenches/t/objects/{body['id']}/content")
+    assert content.content == b"browser-bytes"
+
+
 def test_response_lifecycle(client: TestClient) -> None:
     client.post("/api/workbenches", json={"title": "T", "slug": "t"})
     client.put("/api/workbenches/t/theme", json={"raw": VALID_THEME})

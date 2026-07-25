@@ -21,8 +21,10 @@ Layout:
 from __future__ import annotations
 
 import contextlib
+import copy as _copy
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
@@ -32,7 +34,7 @@ import tempfile
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
 
@@ -50,6 +52,35 @@ from arctic_base.storage.errors import (
 from arctic_base.theme import parse_theme_md
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+ARCHIVE_ROOT = "arctic-base-archive"
+ARCHIVE_FORMAT = 1
+
+
+def _safe_tar_parts(name: str) -> tuple[str, ...]:
+    parts = PurePosixPath(name).parts
+    if not parts or name.startswith("/") or any(p in {"", ".", ".."} for p in parts):
+        raise ValueError(f"unsafe path in archive: {name!r}")
+    return parts
+
+
+def _extract_renamed(
+    tar: tarfile.TarFile, members: list[tarfile.TarInfo], prefix: str, target_root: Path
+) -> None:
+    """Extract members into target_root after stripping prefix from each tar path."""
+
+    target_root.mkdir(parents=True, exist_ok=True)
+    root_resolved = target_root.resolve()
+    for member in members:
+        rel = member.name[len(prefix):] if prefix else member.name
+        if not rel:
+            continue
+        _safe_tar_parts(rel)
+        dest = (target_root / rel).resolve()
+        if dest != root_resolved and root_resolved not in dest.parents:
+            raise ValueError(f"unsafe path in archive: {member.name!r}")
+        renamed = _copy.copy(member)
+        renamed.name = rel
+        tar.extract(renamed, path=target_root, filter="data")
 
 
 def _utcnow() -> datetime:
@@ -405,7 +436,8 @@ class FilesystemStorage:
                 meta_path = entry / "meta.json"
                 if meta_path.is_file():
                     om = ObjectMeta.model_validate_json(meta_path.read_bytes())
-                    _atomic_write(meta_path, _dump_model(om.model_copy(update={"state_version": 0})))
+                    reset = om.model_copy(update={"state_version": 0})
+                    _atomic_write(meta_path, _dump_model(reset))
         # Update workbench manifest.
         manifest_path = dst / "manifest.json"
         original = WorkbenchMeta.model_validate_json(manifest_path.read_bytes())
@@ -437,6 +469,193 @@ class FilesystemStorage:
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             tar.add(wb, arcname=slug)
         return buf.getvalue(), filename
+
+    # --- bulk archive / import ---
+    def archive_manifest(self) -> list[dict]:
+        def dir_size(path: Path) -> int:
+            if not path.is_dir():
+                return 0
+            return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+
+        rows: list[dict] = []
+        snap_root = self.root / "snapshots"
+        for wb in self.list_workbenches():
+            rows.append(
+                {
+                    "slug": wb.slug,
+                    "title": wb.title,
+                    "content_bytes": dir_size(self._wb_dir(wb.slug)),
+                    "snapshot_bytes": dir_size(snap_root / wb.slug),
+                }
+            )
+        return rows
+
+    def export_bulk(
+        self, slugs: list[str], include_snapshots: bool, dest: Path
+    ) -> dict:
+        wb_root = self.root / "workbenches"
+        snap_root = self.root / "snapshots"
+        available = {row["slug"] for row in self.archive_manifest()}
+        unknown = sorted(set(slugs) - available)
+        if unknown:
+            raise NotFound(f"unknown workbench(es): {unknown}")
+
+        exported: list[str] = []
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(dest, "w:gz") as tar:
+            for slug in slugs:
+                tar.add(wb_root / slug, arcname=f"{ARCHIVE_ROOT}/workbenches/{slug}")
+                exported.append(slug)
+                if include_snapshots and (snap_root / slug).is_dir():
+                    tar.add(snap_root / slug, arcname=f"{ARCHIVE_ROOT}/snapshots/{slug}")
+
+            manifest = {
+                "format": "arctic-base-bulk-archive",
+                "format_version": ARCHIVE_FORMAT,
+                "created_at": _utcnow().isoformat(),
+                "include_snapshots": include_snapshots,
+                "workbenches": [
+                    row for row in self.archive_manifest() if row["slug"] in set(exported)
+                ],
+            }
+            blob = json.dumps(manifest, indent=2).encode("utf-8") + b"\n"
+            info = tarfile.TarInfo(f"{ARCHIVE_ROOT}/ARCHIVE.json")
+            info.size = len(blob)
+            info.mtime = int(_utcnow().timestamp())
+            tar.addfile(info, io.BytesIO(blob))
+        return {"exported": exported, "include_snapshots": include_snapshots}
+
+    def inspect_bulk(self, archive_path: Path) -> dict:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            members = [m for m in tar.getmembers() if m.name]
+            for member in members:
+                _safe_tar_parts(member.name)
+            candidates = self._archive_workbench_candidates(tar, members)
+        return {"workbenches": candidates}
+
+    def _archive_workbench_candidates(
+        self, tar: tarfile.TarFile, members: list[tarfile.TarInfo]
+    ) -> list[dict]:
+        names = [m.name for m in members]
+        is_bulk = any(
+            n == f"{ARCHIVE_ROOT}/ARCHIVE.json"
+            or n.startswith(f"{ARCHIVE_ROOT}/workbenches/")
+            for n in names
+        )
+        if is_bulk:
+            slugs = {
+                PurePosixPath(n).parts[2]
+                for n in names
+                if len(PurePosixPath(n).parts) >= 3
+                and PurePosixPath(n).parts[:2] == (ARCHIVE_ROOT, "workbenches")
+            }
+
+            def manifest_name(slug: str) -> str:
+                return f"{ARCHIVE_ROOT}/workbenches/{slug}/manifest.json"
+
+        else:
+            slugs = {PurePosixPath(n).parts[0] for n in names if PurePosixPath(n).parts}
+
+            def manifest_name(slug: str) -> str:
+                return f"{slug}/manifest.json"
+
+        candidates: list[dict] = []
+        member_by_name = {m.name: m for m in members}
+        for slug in sorted(slugs):
+            if not _slug_ok(slug):
+                raise ValueError(f"invalid slug in archive: {slug!r}")
+            title = slug
+            manifest = member_by_name.get(manifest_name(slug))
+            if manifest is not None:
+                extracted = tar.extractfile(manifest)
+                if extracted is not None:
+                    try:
+                        title = str(json.loads(extracted.read()).get("title") or slug)
+                    except Exception:
+                        title = slug
+            candidates.append({"slug": slug, "title": title})
+        if not candidates:
+            raise ValueError("archive does not contain workbenches")
+        return candidates
+
+    def _bulk_import_target_slug(self, slug: str) -> str:
+        candidate = slug
+        copies = 0
+        while self._wb_dir(candidate).exists() or (self.root / "snapshots" / candidate).exists():
+            copies += 1
+            suffix = "-copy" * copies
+            max_slug = 64 - len(suffix)
+            if max_slug < 1:
+                raise ValueError(f"could not create a valid copy slug for {slug!r}")
+            candidate = f"{slug[:max_slug]}{suffix}"
+        return candidate
+
+    def _rewrite_workbench_manifest_slug(self, slug: str) -> None:
+        manifest_path = self._wb_manifest(slug)
+        if manifest_path.is_file():
+            wb = WorkbenchMeta.model_validate_json(manifest_path.read_bytes())
+            _atomic_write(manifest_path, _dump_model(wb.model_copy(update={"slug": slug})))
+
+    def import_bulk(
+        self, archive_path: Path, selected_slugs: list[str] | None = None
+    ) -> dict:
+        snap_root = self.root / "snapshots"
+        imported: list[str] = []
+        skipped: list[str] = []
+
+        selected = set(selected_slugs) if selected_slugs is not None else None
+        with tarfile.open(archive_path, "r:gz") as tar:
+            members = [m for m in tar.getmembers() if m.name]
+            if not members:
+                raise ValueError("archive is empty")
+            for member in members:
+                _safe_tar_parts(member.name)
+            candidates = self._archive_workbench_candidates(tar, members)
+            archive_slugs = {c["slug"] for c in candidates}
+            if selected is not None:
+                unknown = sorted(selected - archive_slugs)
+                if unknown:
+                    raise NotFound(f"archive does not contain selected workbench(es): {unknown}")
+                import_slugs = sorted(selected)
+            else:
+                import_slugs = sorted(archive_slugs)
+
+            names = [m.name for m in members]
+            is_bulk = any(n.startswith(f"{ARCHIVE_ROOT}/workbenches/") for n in names)
+            wb_prefix_root = f"{ARCHIVE_ROOT}/workbenches/" if is_bulk else ""
+            snap_prefix_root = f"{ARCHIVE_ROOT}/snapshots/"
+
+            for slug in import_slugs:
+                target_slug = self._bulk_import_target_slug(slug)
+                wb_prefix = f"{wb_prefix_root}{slug}/"
+                wanted = [
+                    m
+                    for m in members
+                    if m.name == wb_prefix[:-1] or m.name.startswith(wb_prefix)
+                ]
+                if not wanted:
+                    raise NotFound(f"archive does not contain workbench {slug!r}")
+                _extract_renamed(tar, wanted, wb_prefix, self._wb_dir(target_slug))
+                self._rewrite_workbench_manifest_slug(target_slug)
+                imported.append(target_slug)
+                self.audit(
+                    target_slug,
+                    "workbench.import",
+                    source=archive_path.name,
+                    original_slug=slug,
+                )
+
+                if is_bulk:
+                    snap_prefix = f"{snap_prefix_root}{slug}/"
+                    snaps = [
+                        m
+                        for m in members
+                        if m.name == snap_prefix[:-1] or m.name.startswith(snap_prefix)
+                    ]
+                    if snaps:
+                        _extract_renamed(tar, snaps, snap_prefix, snap_root / target_slug)
+
+        return {"imported": sorted(imported), "skipped": sorted(skipped)}
 
     def get_trash_archive(self, archive_name: str) -> bytes:
         path = self.root / "trash" / archive_name

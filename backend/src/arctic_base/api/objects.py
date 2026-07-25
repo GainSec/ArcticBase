@@ -140,7 +140,11 @@ async def create_object(
         file_part = form.get("file")
         if meta_json is None:
             raise HTTPException(status_code=400, detail="missing 'meta' field in multipart")
-        body = ObjectCreate.model_validate_json(str(meta_json))
+        if isinstance(meta_json, UploadFile):
+            meta_raw = (await meta_json.read()).decode("utf-8")
+        else:
+            meta_raw = str(meta_json)
+        body = ObjectCreate.model_validate_json(meta_raw)
         content_bytes: bytes | None = None
         if file_part is not None and isinstance(file_part, UploadFile):
             content_bytes = await file_part.read()

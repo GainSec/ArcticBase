@@ -1,15 +1,30 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type WorkbenchMeta } from "../api";
+  import {
+    api,
+    type ArchiveEntry,
+    type ImportCandidate,
+    type ImportReport,
+    type WorkbenchMeta,
+  } from "../api";
   import { navigate } from "../router";
 
   let workbenches: WorkbenchMeta[] = [];
   let trash: { archive: string }[] = [];
+  let archiveEntries: ArchiveEntry[] = [];
   let loading = true;
   let busy: string | null = null;
   let error: string | null = null;
   let reorderMode = false;
   let savingOrder = false;
+  let exportSelectedSlugs: string[] = [];
+  let includeSnapshots = false;
+  let importFileList: FileList | null = null;
+  let importInspection: ImportCandidate[] = [];
+  let importSelectedSlugs: string[] = [];
+  let inspectingImport = false;
+  let importingArchive = false;
+  let importReport: ImportReport | null = null;
 
   // Edit modal state
   let editing: WorkbenchMeta | null = null;
@@ -35,12 +50,26 @@
   let activity: { ts: number; method: string; path: string; status: number; elapsed_ms: number; request_id: string; is_agent: boolean }[] = [];
   let activityTimer: ReturnType<typeof setInterval> | null = null;
 
+  $: selectedExportEntries = archiveEntries.filter((entry) => exportSelectedSlugs.includes(entry.slug));
+  $: exportAllSelected = archiveEntries.length > 0 && selectedExportEntries.length === archiveEntries.length;
+  $: selectedExportBytes = selectedExportEntries.reduce(
+    (total, entry) => total + entry.content_bytes + (includeSnapshots ? entry.snapshot_bytes : 0),
+    0,
+  );
+  $: selectedImportCandidates = importInspection.filter((entry) => importSelectedSlugs.includes(entry.slug));
+
   async function load() {
     error = null;
     try {
-      const [wbs, ts] = await Promise.all([api.listWorkbenches(), api.listTrash()]);
+      const [wbs, ts, archive] = await Promise.all([
+        api.listWorkbenches(),
+        api.listTrash(),
+        api.archiveManifest(),
+      ]);
       workbenches = wbs;
       trash = ts;
+      archiveEntries = archive.workbenches;
+      exportSelectedSlugs = archive.workbenches.map((entry) => entry.slug);
     } catch (e) {
       error = String(e);
     } finally {
@@ -140,6 +169,75 @@
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
+  function checked(event: Event): boolean {
+    return (event.currentTarget as HTMLInputElement).checked;
+  }
+
+  function toggleExportSlug(slug: string, on: boolean) {
+    exportSelectedSlugs = on
+      ? Array.from(new Set([...exportSelectedSlugs, slug]))
+      : exportSelectedSlugs.filter((s) => s !== slug);
+  }
+
+  function selectAllExports() {
+    exportSelectedSlugs = archiveEntries.map((entry) => entry.slug);
+  }
+
+  function clearExportSelection() {
+    exportSelectedSlugs = [];
+  }
+
+  function toggleImportSlug(slug: string, on: boolean) {
+    importSelectedSlugs = on
+      ? Array.from(new Set([...importSelectedSlugs, slug]))
+      : importSelectedSlugs.filter((s) => s !== slug);
+  }
+
+  function selectAllImports() {
+    importSelectedSlugs = importInspection.map((entry) => entry.slug);
+  }
+
+  function clearImportSelection() {
+    importSelectedSlugs = [];
+  }
+
+  async function inspectImportArchive() {
+    const file = importFileList?.[0];
+    if (!file) return;
+    inspectingImport = true;
+    importReport = null;
+    error = null;
+    try {
+      const result = await api.inspectArchive(file);
+      importInspection = result.workbenches;
+      importSelectedSlugs = result.workbenches
+        .filter((entry) => entry.selected_by_default)
+        .map((entry) => entry.slug);
+    } catch (e) {
+      error = String(e);
+      importInspection = [];
+      importSelectedSlugs = [];
+    } finally {
+      inspectingImport = false;
+    }
+  }
+
+  async function applyImportArchive() {
+    const file = importFileList?.[0];
+    if (!file || importSelectedSlugs.length === 0) return;
+    importingArchive = true;
+    importReport = null;
+    error = null;
+    try {
+      importReport = await api.importArchive(file, importSelectedSlugs);
+      await load();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      importingArchive = false;
+    }
   }
 
   function addCustomField() {
@@ -454,6 +552,117 @@
   </section>
 
   <section>
+    <div class="section-head">
+      <h2 class="label-maker">// BULK_TRANSFER</h2>
+    </div>
+    <div class="bulk-grid">
+      <div class="bulk-panel">
+        <div class="bulk-head">
+          <span class="label-maker">EXPORT_WORKBENCHES</span>
+          <span class="bulk-count">{selectedExportEntries.length}/{archiveEntries.length}</span>
+        </div>
+        <div class="bulk-actions">
+          <button class="ghost tiny" on:click={selectAllExports}>ALL</button>
+          <button class="ghost tiny" on:click={clearExportSelection}>NONE</button>
+          <label class="checkline">
+            <input type="checkbox" bind:checked={includeSnapshots} />
+            <span>SNAPSHOTS</span>
+          </label>
+        </div>
+        <div class="bulk-list">
+          {#each archiveEntries as entry (entry.slug)}
+            <label class="bulk-row">
+              <input
+                type="checkbox"
+                checked={exportSelectedSlugs.includes(entry.slug)}
+                on:change={(event) => toggleExportSlug(entry.slug, checked(event))}
+              />
+              <span class="bulk-title">
+                <span class="bulk-slug">{entry.slug}</span>
+                <span>{entry.title}</span>
+              </span>
+              <span class="bulk-size">
+                {fmtBytes(entry.content_bytes + (includeSnapshots ? entry.snapshot_bytes : 0))}
+              </span>
+            </label>
+          {/each}
+        </div>
+        <div class="bulk-footer">
+          <span class="hint">{fmtBytes(selectedExportBytes)}</span>
+          {#if selectedExportEntries.length > 0}
+            <a
+              class="ghost"
+              href={api.bulkArchiveUrl(exportSelectedSlugs, includeSnapshots, exportAllSelected)}
+              download
+            >
+              EXPORT_SELECTED
+            </a>
+          {:else}
+            <button class="ghost" disabled>EXPORT_SELECTED</button>
+          {/if}
+        </div>
+      </div>
+
+      <div class="bulk-panel">
+        <div class="bulk-head">
+          <span class="label-maker">IMPORT_ARCHIVE</span>
+          <span class="bulk-count">{selectedImportCandidates.length}/{importInspection.length}</span>
+        </div>
+        <div class="import-pick">
+          <input type="file" accept=".tar.gz,application/gzip" bind:files={importFileList} />
+          <button
+            class="ghost"
+            on:click={inspectImportArchive}
+            disabled={inspectingImport || !importFileList || importFileList.length === 0}
+          >
+            {inspectingImport ? "INSPECTING…" : "INSPECT"}
+          </button>
+        </div>
+        {#if importInspection.length > 0}
+          <div class="bulk-actions">
+            <button class="ghost tiny" on:click={selectAllImports}>ALL</button>
+            <button class="ghost tiny" on:click={clearImportSelection}>NONE</button>
+          </div>
+          <div class="bulk-list">
+            {#each importInspection as entry (entry.slug)}
+              <label class="bulk-row">
+                <input
+                  type="checkbox"
+                  checked={importSelectedSlugs.includes(entry.slug)}
+                  on:change={(event) => toggleImportSlug(entry.slug, checked(event))}
+                />
+                <span class="bulk-title">
+                  <span class="bulk-slug">{entry.slug}</span>
+                  <span>{entry.title}</span>
+                </span>
+                <span class:exists={entry.exists} class="bulk-state">
+                  {entry.exists ? "IMPORT_AS_COPY" : "IMPORT"}
+                </span>
+              </label>
+            {/each}
+          </div>
+          <div class="bulk-footer">
+            <span class="hint">{selectedImportCandidates.length} selected</span>
+            <button
+              class="ghost"
+              on:click={applyImportArchive}
+              disabled={importingArchive || selectedImportCandidates.length === 0}
+            >
+              {importingArchive ? "IMPORTING…" : "IMPORT_SELECTED"}
+            </button>
+          </div>
+        {/if}
+        {#if importReport}
+          <div class="import-report">
+            <span>IMPORTED {importReport.imported.length}</span>
+            <span>SKIPPED {importReport.skipped.length}</span>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2 class="label-maker">// SCRAP_VAULT (TRASH)</h2>
     {#if trash.length === 0}
       <p class="empty label-maker">// VAULT_EMPTY</p>
@@ -757,6 +966,102 @@
   .ghost.active { background: var(--ab-yellow); color: #000; border-color: #000; }
   .ghost.tiny { padding: 2px 6px; font-size: 10px; min-width: 24px; }
   .reorder-controls { display: flex; gap: 4px; margin-top: 4px; }
+  .bulk-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .bulk-panel {
+    background: var(--ab-surface);
+    border: 2.5px solid #000;
+    box-shadow: var(--ab-shadow-hard);
+    border-radius: var(--ab-radius);
+    padding: 14px;
+    min-width: 0;
+  }
+  .bulk-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ab-rule);
+  }
+  .bulk-count {
+    font-family: var(--ab-font-mono);
+    color: var(--ab-yellow);
+    font-size: 12px;
+  }
+  .bulk-actions, .bulk-footer, .import-pick, .import-report {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .bulk-footer { justify-content: space-between; border-top: 1px solid var(--ab-rule); padding-top: 10px; }
+  .checkline {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ab-muted);
+    font-family: var(--ab-font-stencil);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+  }
+  .bulk-list {
+    margin-top: 10px;
+    border: 1px solid var(--ab-rule);
+    border-radius: 4px;
+    overflow: auto;
+    max-height: 300px;
+  }
+  .bulk-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--ab-rule);
+    cursor: pointer;
+  }
+  .bulk-row:last-child { border-bottom: 0; }
+  .bulk-row:hover { background: var(--ab-bg); }
+  .bulk-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .bulk-slug {
+    color: var(--ab-yellow);
+    font-family: var(--ab-font-mono);
+    font-size: 12px;
+    word-break: break-all;
+  }
+  .bulk-title span:last-child {
+    color: var(--ab-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bulk-size, .bulk-state {
+    font-family: var(--ab-font-mono);
+    color: var(--ab-muted);
+    font-size: 11px;
+    text-align: right;
+  }
+  .bulk-state.exists { color: var(--ab-tertiary); }
+  .import-pick input[type="file"] {
+    color: var(--ab-muted);
+    font-size: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+  .import-report {
+    border: 1px solid var(--ab-rule);
+    background: var(--ab-bg);
+    padding: 8px 10px;
+    color: var(--ab-green);
+    font-family: var(--ab-font-mono);
+    font-size: 12px;
+  }
 
   .table {
     background: var(--ab-surface);
@@ -825,6 +1130,7 @@
   /* mobile: stack the row into vertical cells */
   @media (max-width: 880px) {
     .desktop-only { display: none; }
+    .bulk-grid { grid-template-columns: 1fr; }
     .row { grid-template-columns: 1fr; gap: 10px; }
     .slug-mark { display: inline; }
     .cell-actions { justify-content: flex-start; }

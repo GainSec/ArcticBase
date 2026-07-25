@@ -20,6 +20,35 @@ export interface WorkbenchMeta {
   last_accessed_at: string | null;
 }
 
+export interface ArchiveEntry {
+  slug: string;
+  title: string;
+  content_bytes: number;
+  snapshot_bytes: number;
+}
+
+export interface ArchiveManifest {
+  workbenches: ArchiveEntry[];
+  total_content_bytes: number;
+  total_snapshot_bytes: number;
+}
+
+export interface ImportCandidate {
+  slug: string;
+  title: string;
+  exists: boolean;
+  selected_by_default: boolean;
+}
+
+export interface ImportInspection {
+  workbenches: ImportCandidate[];
+}
+
+export interface ImportReport {
+  imported: string[];
+  skipped: string[];
+}
+
 export type ObjectKind = "md" | "html" | "approval-html" | "image" | "qa-form" | "file" | "runbook";
 
 export interface ObjectMeta {
@@ -116,6 +145,29 @@ export const api = {
     }),
   archiveWorkbench: (slug: string) =>
     req<{ archive: string }>("DELETE", `/api/workbenches/${slug}`),
+
+  // bulk archive / import
+  archiveManifest: () => req<ArchiveManifest>("GET", "/api/archive/manifest"),
+  bulkArchiveUrl: (slugs: string[], includeSnapshots: boolean, allSelected: boolean) => {
+    const p = new URLSearchParams();
+    if (!allSelected) p.set("slugs", slugs.join(","));
+    if (includeSnapshots) p.set("include_snapshots", "true");
+    const q = p.toString();
+    return `/api/archive${q ? `?${q}` : ""}`;
+  },
+  inspectArchive: (file: File) => {
+    const fd = new FormData();
+    fd.set("file", file);
+    return req<ImportInspection>("POST", "/api/archive/inspect", { body: fd });
+  },
+  importArchive: (file: File, slugs?: string[]) => {
+    const fd = new FormData();
+    fd.set("file", file);
+    const p = new URLSearchParams();
+    if (slugs) p.set("slugs", slugs.join(","));
+    const q = p.toString();
+    return req<ImportReport>("POST", `/api/archive/import${q ? `?${q}` : ""}`, { body: fd });
+  },
   listTrash: () =>
     req<{ archive: string }[]>("GET", "/api/workbenches/_trash/list"),
   restoreWorkbench: (archive: string) =>

@@ -2,6 +2,8 @@
 
 # Runtime state (mounted at runtime as a volume; never baked into the image).
 data/
+data-*/
+**/data/
 trash/
 snapshots/
 

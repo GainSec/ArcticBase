@@ -15,6 +15,7 @@ frontend/dist/
 
 # Arctic Base data
 data/
+data-*/
 
 # OS
 .DS_Store

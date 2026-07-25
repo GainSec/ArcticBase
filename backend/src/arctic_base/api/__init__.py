@@ -1,8 +1,9 @@
 from fastapi import APIRouter
 
-from arctic_base.api import agent, objects, render, responses, theme, workbenches
+from arctic_base.api import agent, archive, objects, render, responses, theme, workbenches
 
 router = APIRouter(prefix="/api")
+router.include_router(archive.router)
 router.include_router(workbenches.router)
 router.include_router(theme.router)
 router.include_router(objects.router)
