@@ -239,6 +239,30 @@ def test_render_md(client: TestClient) -> None:
     assert "--wb-accent" in r.text
 
 
+@pytest.mark.parametrize(
+    ("kind", "content"),
+    [
+        ("html", b'<a href="/wb/t/o/target">Target</a>'),
+        ("md", b"[Target](/wb/t/o/target)"),
+    ],
+)
+def test_render_promotes_workbench_links_out_of_iframes(
+    client: TestClient, kind: str, content: bytes
+) -> None:
+    client.post("/api/workbenches", json={"title": "T", "slug": "t"})
+    obj = client.post(
+        "/api/workbenches/t/objects",
+        json={"kind": kind, "title": "Linked document"},
+    ).json()
+    client.put(f"/api/workbenches/t/objects/{obj['id']}/content", content=content)
+
+    rendered = client.get(f"/api/workbenches/t/objects/{obj['id']}/render")
+
+    assert rendered.status_code == 200
+    assert 'data-arctic-base="navigation"' in rendered.text
+    assert "window.top.location.assign(url.href)" in rendered.text
+
+
 def test_get_workbench_bumps_last_accessed_at(client: TestClient) -> None:
     client.post("/api/workbenches", json={"title": "T", "slug": "ax"})
     initial = client.get("/api/workbenches/ax").json()

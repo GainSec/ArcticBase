@@ -52,6 +52,33 @@ _SHADOW_VALUE = {
 }
 
 
+_NAVIGATION_SCRIPT = r"""<script data-arctic-base="navigation">
+(function () {
+  function promoteWorkbenchNavigation(ev) {
+    if (window.top === window) return;
+    if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey ||
+        ev.shiftKey || ev.altKey) return;
+    var node = ev.target;
+    if (!node || node.nodeType !== 1) return;
+    var anchor = node.closest('a[href]');
+    if (!anchor || anchor.hasAttribute('download')) return;
+    var target = (anchor.getAttribute('target') || '').toLowerCase();
+    if (target && target !== '_self') return;
+    var url;
+    try {
+      url = new URL(anchor.href, document.baseURI);
+    } catch (_) {
+      return;
+    }
+    if (url.origin !== window.location.origin || url.pathname.indexOf('/wb/') !== 0) return;
+    ev.preventDefault();
+    window.top.location.assign(url.href);
+  }
+  document.addEventListener('click', promoteWorkbenchNavigation, true);
+})();
+</script>"""
+
+
 def build_theme_style_block(theme: Theme, scope: str = ":root") -> str:
     decls: list[str] = []
     for k, v in theme.tokens.core.items():
@@ -205,7 +232,7 @@ def render_object(
         html_body = _md.render(text)
         page = (
             "<!DOCTYPE html><html><head>"
-            f"{style_block}"
+            f"{style_block}{_NAVIGATION_SCRIPT}"
             "<style>"
             "body{margin:0;padding:var(--wb-space-margin,32px);"
             "background:var(--wb-bg);color:var(--wb-ink);"
@@ -220,7 +247,7 @@ def render_object(
     if meta.kind in (ObjectKind.html, ObjectKind.approval_html, ObjectKind.qa_form):
         raw, _ = storage.get_object_content(slug, oid)
         text = raw.decode("utf-8", errors="replace")
-        head_blocks = [style_block]
+        head_blocks = [style_block, _NAVIGATION_SCRIPT]
         if with_runtime:
             head_blocks.append(
                 build_bridge_script(
