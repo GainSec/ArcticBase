@@ -5,15 +5,16 @@
 
   export let slug: string;
   export let oid: string;
+  export let meta: ObjectMeta;
 
-  let meta: ObjectMeta | null = null;
   let url: string | null = null;
   let error: string | null = null;
+  let disposed = false;
 
   onMount(async () => {
     try {
-      meta = await api.getObject(slug, oid);
       const { blob } = await api.getObjectContentBlob(slug, oid);
+      if (disposed) return;
       url = URL.createObjectURL(blob);
     } catch (e) {
       error = String(e);
@@ -21,6 +22,7 @@
   });
 
   onDestroy(() => {
+    disposed = true;
     if (url) URL.revokeObjectURL(url);
   });
 </script>

@@ -4,6 +4,7 @@
   import { navigate } from "../router";
 
   type Enriched = WorkbenchMeta & {
+    statsState: "loading" | "ready" | "unavailable";
     objectCount: number;
     objectsByKind: Record<string, number>;
     totalSize: number;
@@ -33,8 +34,15 @@
   let lastFile: { slug: string; title: string; at: Date } | null = null;
   let activeTag: string | null = null;
   let showTagFilter = false;
+  let loadController: AbortController | null = null;
+  let destroyed = false;
+  $: statsReady = workbenches.filter((w) => w.statsState === "ready").length;
+  $: statsPending = workbenches.some((w) => w.statsState === "loading");
+  $: statsPartial = workbenches.some((w) => w.statsState !== "ready");
 
-  function deriveStats(wb: WorkbenchMeta, objects: ObjectMeta[]): Enriched {
+  function deriveStats(wb: WorkbenchMeta, objects?: ObjectMeta[]): Enriched {
+    const statsState = objects ? "ready" : "loading";
+    objects ??= [];
     const objectCount = objects.length;
     const totalSize = objects.reduce((a, o) => a + o.size_bytes, 0);
     const objectsByKind: Record<string, number> = {};
@@ -43,8 +51,8 @@
     const isUrgent = nowMs - new Date(wb.updated_at).getTime() < 30 * 60 * 1000;
     const isRecent = nowMs - new Date(wb.updated_at).getTime() < 24 * 60 * 60 * 1000;
     const primaryButton: Enriched["primaryButton"] =
-      objectCount === 0 ? "schematics" : powerLevel < 50 ? "continue" : "access";
-    return { ...wb, objectCount, objectsByKind, totalSize, powerLevel, isUrgent, isRecent, primaryButton };
+      statsState !== "ready" ? "access" : objectCount === 0 ? "schematics" : powerLevel < 50 ? "continue" : "access";
+    return { ...wb, statsState, objectCount, objectsByKind, totalSize, powerLevel, isUrgent, isRecent, primaryButton };
   }
 
   function fmtBytes(n: number): string {
@@ -76,49 +84,69 @@
   }
 
   async function load() {
+    if (destroyed) return;
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
     try {
-      const list = await api.listWorkbenches();
-      const pairs = await Promise.all(
-        list.map(async (wb) => {
-          try { return { wb, objs: await api.listObjects(wb.slug) }; }
-          catch { return { wb, objs: [] as ObjectMeta[] }; }
-        }),
-      );
-      const enriched = pairs.map(({ wb, objs }) => deriveStats(wb, objs));
-      workbenches = enriched;
-      totalObjects = enriched.reduce((a, w) => a + w.objectCount, 0);
-      totalSize = enriched.reduce((a, w) => a + w.totalSize, 0);
-      const merged: Record<string, number> = {};
-      for (const w of enriched) {
-        for (const [k, n] of Object.entries(w.objectsByKind)) merged[k] = (merged[k] ?? 0) + n;
-      }
-      totalsByKind = merged;
-      const updated = enriched
+      const list = await api.listWorkbenches(controller.signal);
+      if (controller.signal.aborted) return;
+      error = null;
+      workbenches = list.map((wb) => deriveStats(wb));
+      totalObjects = 0;
+      totalSize = 0;
+      totalsByKind = {};
+      lastFile = null;
+      const updated = list
         .map((w) => new Date(w.updated_at).getTime())
         .filter((t) => Number.isFinite(t));
       mostRecent = updated.length ? new Date(Math.max(...updated)) : null;
 
-      const wbWithAccess = enriched
+      const wbWithAccess = list
         .filter((w) => w.last_accessed_at)
         .map((w) => ({ slug: w.slug, title: w.title, at: new Date(w.last_accessed_at!) }))
         .sort((a, b) => b.at.getTime() - a.at.getTime());
       lastWorkbench = wbWithAccess[0] ?? null;
 
-      let bestFile: typeof lastFile = null;
-      for (const { wb, objs } of pairs) {
-        for (const o of objs) {
-          if (!o.last_accessed_at) continue;
-          const at = new Date(o.last_accessed_at);
-          if (!bestFile || at.getTime() > bestFile.at.getTime()) {
-            bestFile = { slug: wb.slug, title: o.title || o.filename || o.id, at };
+      // Cards are usable before any object list finishes. Bound background work
+      // so navigation and foreground requests have room to proceed.
+      let next = 0;
+      let lastFileWorkbenchIndex = Infinity;
+      async function enrich() {
+        while (!controller.signal.aborted && next < list.length) {
+          const index = next++;
+          const wb = list[index];
+          try {
+            const objs = await api.listObjects(wb.slug, { signal: controller.signal });
+            if (controller.signal.aborted) return;
+            const enriched = deriveStats(wb, objs);
+            workbenches = workbenches.map((w) => w.slug === wb.slug ? enriched : w);
+            totalObjects += enriched.objectCount;
+            totalSize += enriched.totalSize;
+            const merged = { ...totalsByKind };
+            for (const [k, n] of Object.entries(enriched.objectsByKind)) merged[k] = (merged[k] ?? 0) + n;
+            totalsByKind = merged;
+            for (const o of objs) {
+              if (!o.last_accessed_at) continue;
+              const at = new Date(o.last_accessed_at);
+              if (!lastFile || at.getTime() > lastFile.at.getTime() ||
+                  (at.getTime() === lastFile.at.getTime() && index < lastFileWorkbenchIndex)) {
+                lastFile = { slug: wb.slug, title: o.title || o.filename || o.id, at };
+                lastFileWorkbenchIndex = index;
+              }
+            }
+          } catch {
+            if (controller.signal.aborted) return;
+            workbenches = workbenches.map((w) => w.slug === wb.slug ? { ...w, statsState: "unavailable" } : w);
           }
         }
       }
-      lastFile = bestFile;
+      for (let i = 0; i < Math.min(4, list.length); i++) void enrich();
     } catch (e) {
+      if (controller.signal.aborted) return;
       error = String(e);
     } finally {
-      loading = false;
+      if (!controller.signal.aborted) loading = false;
     }
   }
 
@@ -127,7 +155,11 @@
     const t = setInterval(() => {
       nowMs = Date.now();
     }, 30000);
-    return () => clearInterval(t);
+    return () => {
+      destroyed = true;
+      loadController?.abort();
+      clearInterval(t);
+    };
   });
 
   async function create() {
@@ -179,6 +211,11 @@
     }
   }
 
+  function stat(value: string | number, partial: boolean, ready: number): string {
+    if (partial && ready === 0) return statsPending ? "loading…" : "unavailable";
+    return `${value}${partial ? " (partial)" : ""}`;
+  }
+
 </script>
 
 <main>
@@ -192,17 +229,17 @@
         </div>
         <pre class="console-body">{`> system_status........ NOMINAL
 > workbenches active... ${pad(workbenches.length, 6)}
-> total objects........ ${pad(totalObjects, 6)}
->   approval-html...... ${pad(totalsByKind["approval-html"] ?? 0, 4)}
->   qa-form............ ${pad(totalsByKind["qa-form"] ?? 0, 4)}
->   md................. ${pad(totalsByKind["md"] ?? 0, 4)}
->   html............... ${pad(totalsByKind["html"] ?? 0, 4)}
->   image.............. ${pad(totalsByKind["image"] ?? 0, 4)}
->   file............... ${pad(totalsByKind["file"] ?? 0, 4)}
-> total cache.......... ${pad(fmtBytes(totalSize), 10)}
+> total objects........ ${pad(stat(totalObjects, statsPartial, statsReady), 6)}
+>   approval-html...... ${pad(stat(totalsByKind["approval-html"] ?? 0, statsPartial, statsReady), 4)}
+>   qa-form............ ${pad(stat(totalsByKind["qa-form"] ?? 0, statsPartial, statsReady), 4)}
+>   md................. ${pad(stat(totalsByKind["md"] ?? 0, statsPartial, statsReady), 4)}
+>   html............... ${pad(stat(totalsByKind["html"] ?? 0, statsPartial, statsReady), 4)}
+>   image.............. ${pad(stat(totalsByKind["image"] ?? 0, statsPartial, statsReady), 4)}
+>   file............... ${pad(stat(totalsByKind["file"] ?? 0, statsPartial, statsReady), 4)}
+> total cache.......... ${pad(stat(fmtBytes(totalSize), statsPartial, statsReady), 10)}
 > last activity........ ${pad(fmtAgo(mostRecent), 10)}
 > last workbench....... ${lastWorkbench ? `${lastWorkbench.slug} (${fmtAgo(lastWorkbench.at)})` : "—"}
-> last file............ ${lastFile ? `${lastFile.slug}/${lastFile.title} (${fmtAgo(lastFile.at)})` : "—"}`}<span class="console-cursor">▌</span></pre>
+> last file............ ${stat(lastFile ? `${lastFile.slug}/${lastFile.title} (${fmtAgo(lastFile.at)})` : "—", statsPartial, statsReady)}`}<span class="console-cursor">▌</span></pre>
       </div>
     </div>
   </section>
@@ -331,10 +368,10 @@
             <div class="meter">
               <div class="meter-row label-maker">
                 <span>POWER_LEVEL</span>
-                <span class="meter-pct">{wb.powerLevel}%</span>
+                <span class="meter-pct">{wb.statsState === "ready" ? `${wb.powerLevel}%` : wb.statsState === "loading" ? "Loading…" : "Unavailable"}</span>
               </div>
               <div class="meter-track">
-                <div class="meter-fill" style="width: {wb.powerLevel}%"></div>
+                <div class="meter-fill" style="width: {wb.statsState === 'ready' ? wb.powerLevel : 0}%"></div>
               </div>
             </div>
 

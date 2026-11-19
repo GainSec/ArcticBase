@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { api, type ObjectMeta, type ObjectKind, type Theme, type WorkbenchMeta } from "../api";
   import { navigate } from "../router";
   import { renderMiniMd } from "../mini-md";
@@ -17,6 +17,8 @@
   let editMode = false;
   let savingOrder = false;
   let showArchived = false;
+  let disposed = false;
+  onDestroy(() => { disposed = true; });
 
   const drawerOrder: { kind: ObjectKind; label: string }[] = [
     { kind: "approval-html", label: "Approvals" },
@@ -30,25 +32,27 @@
 
   async function loadAll() {
     try {
-      wb = await api.getWorkbench(slug);
+      const [loadedWorkbench, loadedObjects, loadedTheme] = await Promise.all([
+        api.getWorkbench(slug),
+        api.listObjects(slug, { includeArchived: showArchived }),
+        api.getTheme(slug).catch(() => null),
+      ]);
+      if (disposed) return;
+      wb = loadedWorkbench;
       onWorkbench(wb);
-      objects = await api.listObjects(slug, { includeArchived: showArchived });
-      try {
-        theme = await api.getTheme(slug);
-      } catch {
-        theme = null;
-      }
+      objects = loadedObjects;
+      theme = loadedTheme;
       onTheme(theme);
     } catch (e) {
+      if (disposed) return;
       error = String(e);
     } finally {
-      loading = false;
+      if (!disposed) loading = false;
     }
   }
 
   onMount(loadAll);
 
-  $: if (showArchived !== undefined && !loading) reloadObjects();
   async function reloadObjects() {
     try { objects = await api.listObjects(slug, { includeArchived: showArchived }); } catch {}
   }
@@ -196,7 +200,7 @@
           {editMode ? "Done" : "Edit"}
         </button>
         <label class="show-archived">
-          <input type="checkbox" bind:checked={showArchived} />
+          <input type="checkbox" bind:checked={showArchived} on:change={reloadObjects} />
           <span>Show archived</span>
         </label>
         {#if savingOrder}<span class="saving">saving order…</span>{/if}

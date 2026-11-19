@@ -6,6 +6,9 @@
 
   export let slug: string;
   export let oid: string;
+  export let meta: ObjectMeta;
+  export let theme: Theme | null = null;
+  export let wb: WorkbenchMeta | null = null;
 
   type Status = "todo" | "in-progress" | "done" | "blocked";
   interface Step {
@@ -23,9 +26,6 @@
     steps: Step[];
   }
 
-  let meta: ObjectMeta | null = null;
-  let theme: Theme | null = null;
-  let wb: WorkbenchMeta | null = null;
   let runbook: Runbook = { steps: [] };
   let saving = false;
   let saved = false;
@@ -34,9 +34,6 @@
 
   async function load() {
     try {
-      meta = await api.getObject(slug, oid);
-      try { theme = await api.getTheme(slug); } catch {}
-      try { wb = await api.getWorkbench(slug); } catch {}
       const { text } = await api.getObjectContentText(slug, oid);
       try {
         runbook = text.trim() ? JSON.parse(text) : { steps: [] };

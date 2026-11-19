@@ -1,23 +1,13 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { api, type ObjectMeta } from "../api";
+  import type { ObjectMeta } from "../api";
   import { navigate } from "../router";
 
   export let slug: string;
   export let oid: string;
+  export let meta: ObjectMeta;
 
-  let meta: ObjectMeta | null = null;
-  let url = "";
-  let error: string | null = null;
+  $: url = `/api/workbenches/${slug}/objects/${oid}/render?with_runtime=true`;
 
-  onMount(async () => {
-    try {
-      meta = await api.getObject(slug, oid);
-      url = `/api/workbenches/${slug}/objects/${oid}/render?with_runtime=true`;
-    } catch (e) {
-      error = String(e);
-    }
-  });
 </script>
 
 <div class="wrap">
@@ -27,7 +17,6 @@
     <span class="spacer"></span>
     {#if meta}<button on:click={() => navigate(`/wb/${slug}/o/${oid}/edit`)}>Edit</button>{/if}
   </div>
-  {#if error}<div class="error">{error}</div>{/if}
   {#if url}
     <iframe
       title={meta?.title ?? "doc"}
@@ -45,5 +34,4 @@
   button { background: var(--ab-bg); border: 1.5px solid var(--ab-rule); color: inherit; padding: 7px 12px; border-radius: var(--ab-radius); cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
   button.back { background: transparent; border: none; }
   iframe { flex: 1; min-height: 0; width: 100%; border: 0; }
-  .error { background: var(--ab-bg); color: var(--ab-error); padding: 8px 16px; border-bottom: 2px solid var(--ab-error); }
 </style>

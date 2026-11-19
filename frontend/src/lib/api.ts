@@ -129,10 +129,20 @@ async function req<T>(method: string, url: string, init: RequestInit = {}): Prom
   return (await r.text()) as unknown as T;
 }
 
+// Share concurrent metadata reads, but always fetch fresh data after they settle.
+const metadataRequests = new Map<string, Promise<unknown>>();
+function metadata<T>(url: string): Promise<T> {
+  const existing = metadataRequests.get(url);
+  if (existing) return existing as Promise<T>;
+  const pending = req<T>("GET", url).finally(() => metadataRequests.delete(url));
+  metadataRequests.set(url, pending);
+  return pending;
+}
+
 export const api = {
   // workbenches
-  listWorkbenches: () => req<WorkbenchMeta[]>("GET", "/api/workbenches"),
-  getWorkbench: (slug: string) => req<WorkbenchMeta>("GET", `/api/workbenches/${slug}`),
+  listWorkbenches: (signal?: AbortSignal) => req<WorkbenchMeta[]>("GET", "/api/workbenches", { signal }),
+  getWorkbench: (slug: string) => metadata<WorkbenchMeta>(`/api/workbenches/${slug}`),
   createWorkbench: (body: { title: string; slug?: string; description?: string; tags?: string[]; url?: string; ip?: string; local_path?: string; }) =>
     req<WorkbenchMeta>("POST", "/api/workbenches", {
       headers: { "content-type": "application/json" },
@@ -266,7 +276,7 @@ export const api = {
     ),
 
   // theme
-  getTheme: (slug: string) => req<Theme>("GET", `/api/workbenches/${slug}/theme`),
+  getTheme: (slug: string) => metadata<Theme>(`/api/workbenches/${slug}/theme`),
   getThemeRaw: (slug: string) => req<string>("GET", `/api/workbenches/${slug}/theme/raw`),
   putTheme: (slug: string, raw: string) =>
     req<Theme>("PUT", `/api/workbenches/${slug}/theme`, {
@@ -275,10 +285,11 @@ export const api = {
     }),
 
   // objects
-  listObjects: (slug: string, opts?: { includeArchived?: boolean }) =>
+  listObjects: (slug: string, opts?: { includeArchived?: boolean; signal?: AbortSignal }) =>
     req<ObjectMeta[]>(
       "GET",
       `/api/workbenches/${slug}/objects${opts?.includeArchived ? "?include_archived=true" : ""}`,
+      { signal: opts?.signal },
     ),
   getObject: (slug: string, oid: string) =>
     req<ObjectMeta>("GET", `/api/workbenches/${slug}/objects/${oid}`),

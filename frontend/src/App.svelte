@@ -34,6 +34,8 @@
   onMount(installBridge);
 
   let lastSlug: string | null = null;
+  let lastWorkbenchPath: string | null = null;
+  let workbenchRequest = 0;
   $: {
     const path = $route.path;
     const m =
@@ -44,29 +46,37 @@
       match("/wb/:slug/o/:oid/edit", path) ||
       match("/wb/:slug/o/:oid/responses", path);
     const slug = m?.slug ?? null;
-    if (slug !== lastSlug) {
+    // Refresh on route entry, including same-workbench navigation after edits.
+    if (path !== lastWorkbenchPath) {
+      lastWorkbenchPath = path;
       lastSlug = slug;
+      const request = ++workbenchRequest;
+      activeWorkbench = null;
+      activeTheme = null;
       if (slug) {
-        api.getWorkbench(slug).then((wb) => (activeWorkbench = wb)).catch(() => (activeWorkbench = null));
-        api.getTheme(slug).then((t) => (activeTheme = t)).catch(() => (activeTheme = null));
-      } else {
-        activeWorkbench = null;
-        activeTheme = null;
+        api.getWorkbench(slug).then((wb) => {
+          if (workbenchRequest === request) activeWorkbench = wb;
+        }).catch(() => {});
+        api.getTheme(slug).then((t) => {
+          if (workbenchRequest === request) activeTheme = t;
+        }).catch(() => {});
       }
-      viewedObject = null;
     }
   }
 
   let lastOidKey: string | null = null;
+  let objectRequest = 0;
   $: {
     const m = match("/wb/:slug/o/:oid", $route.path);
     const key = m ? `${m.slug}/${m.oid}` : null;
     if (key !== lastOidKey) {
       lastOidKey = key;
+      const request = ++objectRequest;
+      viewedObject = null;
       if (m) {
-        api.getObject(m.slug, m.oid).then((o) => (viewedObject = o)).catch(() => (viewedObject = null));
-      } else {
-        viewedObject = null;
+        api.getObject(m.slug, m.oid).then((o) => {
+          if (objectRequest === request) viewedObject = o;
+        }).catch(() => {});
       }
     }
   }
@@ -90,11 +100,13 @@
       {:else if match("/wb/:slug", $route.path)}
         {@const m1 = match("/wb/:slug", $route.path)}
         {#if m1}
+          {#key m1.slug}
           <WorkbenchDashboard
             slug={m1.slug}
-            onTheme={(t) => (activeTheme = t)}
-            onWorkbench={(w) => (activeWorkbench = w)}
+            onTheme={(t) => { if (lastSlug === m1.slug) activeTheme = t; }}
+            onWorkbench={(w) => { if (lastSlug === m1.slug) activeWorkbench = w; }}
           />
+          {/key}
         {/if}
       {:else if match("/wb/:slug/files", $route.path)}
         {@const m2 = match("/wb/:slug/files", $route.path)}
@@ -123,19 +135,21 @@
       {:else if match("/wb/:slug/o/:oid", $route.path)}
         {@const m5 = match("/wb/:slug/o/:oid", $route.path)}
         {#if m5}
+          {#key `${m5.slug}/${m5.oid}`}
           {#if !viewedObject}
             <p class="loading label-maker">// LOADING…</p>
           {:else if viewedObject.kind === "image"}
-            <ImageViewer slug={m5.slug} oid={m5.oid} />
+            <ImageViewer slug={m5.slug} oid={m5.oid} meta={viewedObject} />
           {:else if viewedObject.kind === "md"}
-            <MdViewer slug={m5.slug} oid={m5.oid} />
+            <MdViewer slug={m5.slug} oid={m5.oid} meta={viewedObject} />
           {:else if viewedObject.kind === "html" || viewedObject.kind === "approval-html" || viewedObject.kind === "qa-form"}
-            <HtmlViewer slug={m5.slug} oid={m5.oid} />
+            <HtmlViewer slug={m5.slug} oid={m5.oid} meta={viewedObject} />
           {:else if viewedObject.kind === "runbook"}
-            <RunbookViewer slug={m5.slug} oid={m5.oid} />
+            <RunbookViewer slug={m5.slug} oid={m5.oid} meta={viewedObject} theme={activeTheme} wb={activeWorkbench} />
           {:else}
             <FileBrowser slug={m5.slug} />
           {/if}
+          {/key}
         {/if}
       {:else}
         <main class="not-found">
